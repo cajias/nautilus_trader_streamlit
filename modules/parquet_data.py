@@ -29,6 +29,7 @@ rather than raising — callers should treat empty as "no data yet".
 from __future__ import annotations
 
 import logging
+import re
 from pathlib import Path
 from typing import List, Optional
 
@@ -37,10 +38,19 @@ import pandas as pd
 __all__ = [
     "load_ohlcv_parquet",
     "list_bar_types",
+    "BAR_TYPE_RE",
     "FIXED_SCALAR",
 ]
 
 _logger = logging.getLogger(__name__)
+
+# Matches a full Nautilus bar type directory name, e.g.
+# ``BTCUSDT.BINANCE-1-HOUR-LAST-EXTERNAL``. Declared here (rather than
+# imported from ``data_connector``) to keep this module importable without
+# a circular dependency — ``data_connector`` already imports from here.
+BAR_TYPE_RE = re.compile(
+    r"^[A-Z0-9]+\.[A-Z]+-\d+-[A-Z]+-[A-Z]+-[A-Z]+$"
+)
 
 # NautilusTrader v1.224.0 high-precision build uses int128 raw values scaled
 # by 10**16. Hard-coded to avoid importing ``nautilus_trader.core.nautilus_pyo3``
@@ -142,6 +152,14 @@ def load_ohlcv_parquet(
         Empty DataFrame with the expected schema if the bar_type directory
         does not exist or contains no rows.
     """
+    if not isinstance(bar_type, str) or not BAR_TYPE_RE.match(bar_type):
+        raise ValueError(
+            f"bar_type {bar_type!r} is not a valid Nautilus bar type string "
+            "(expected e.g. 'BTCUSDT.BINANCE-1-HOUR-LAST-EXTERNAL'); "
+            "use DataConnector.get_parquet_bar_type(exchange, symbol, timeframe) "
+            "to compose one."
+        )
+
     try:
         import pyarrow.parquet as pq  # Local import: heavy dep, defer.
     except ImportError as exc:  # pragma: no cover - import guard

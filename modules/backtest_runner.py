@@ -62,6 +62,11 @@ def parse_instrument_id(instrument_id: str) -> tuple[str, str]:
             f"instrument_id must be of the form 'SYMBOL.VENUE', got: {instrument_id!r}"
         )
     symbol, venue = instrument_id.split(".", 1)
+    if not symbol or not venue:
+        raise ValueError(
+            f"instrument_id {instrument_id!r} has empty symbol or venue; "
+            "expected 'SYMBOL.VENUE'"
+        )
     return symbol.upper(), venue.upper()
 
 
@@ -126,14 +131,14 @@ def dataframe_to_bars(
     df: pd.DataFrame,
     instrument_factory: Optional[Callable] = None,
 ):
-    if instrument_factory is None:
-        instrument_factory = resolve_instrument_factory(resolve_instrument_id_from_env())
     """
     Accept a DataFrame (as from ``load_ohlcv_csv``) and return
     ``(instrument, bar_type, bars, df)``.
 
     *Interval* is inferred automatically from index differences.
     """
+    if instrument_factory is None:
+        instrument_factory = resolve_instrument_factory(resolve_instrument_id_from_env())
     if df.empty:
         raise ValueError("DataFrame is empty – nothing to convert.")
 

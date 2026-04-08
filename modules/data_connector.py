@@ -243,9 +243,14 @@ class DataConnector:
         source : str
             One of ``"CSV"``, ``"PARQUET"``, or ``"CLICKHOUSE"``.
         spec : Any
-            CSV → path string. PARQUET → bar_type string (e.g.
-            ``"BTCUSDT.BINANCE-1-HOUR-LAST-EXTERNAL"``). CLICKHOUSE → kwargs
-            dict forwarded to :meth:`ClickHouseConnector.candles`.
+            CSV → path string. PARQUET → **full** bar_type string of the
+            form ``"<SYMBOL>.<VENUE>-<N>-<UNIT>-<PRICE>-<SOURCE>"`` (e.g.
+            ``"BTCUSDT.BINANCE-1-HOUR-LAST-EXTERNAL"``). A bare instrument
+            id like ``"BTCUSDT.BINANCE"`` will be rejected with
+            ``ValueError`` — use :meth:`get_parquet_bar_type` to compose
+            a valid bar_type from ``(exchange, symbol, timeframe)``.
+            CLICKHOUSE → kwargs dict forwarded to
+            :meth:`ClickHouseConnector.candles`.
         """
         source_u = source.upper()
         if source_u == "CSV":
