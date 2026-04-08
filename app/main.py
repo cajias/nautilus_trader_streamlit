@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 # ───────────────────────────── standard libs ────────────────────────────────
+import os
 import sys
 import pathlib
 import numbers
@@ -1518,7 +1519,9 @@ with st.sidebar:
     if info.doc:
         st.caption(info.doc)
 
-    connector = DataConnector()
+    _nt_data_dir = os.getenv("NT_DATA_DIR", ".")
+    _nt_data_source = os.getenv("NT_DATA_SOURCE", "CSV")
+    connector = DataConnector(data_dir=_nt_data_dir, source=_nt_data_source)
 
     # ── Data source tabs ────────────────────────────────────────────────
     st.markdown(
@@ -1683,7 +1686,9 @@ elif run_ch:
 
 if run_bt:
     with st.spinner("Running back‑test… please wait"):
-        connector = DataConnector()
+        _nt_data_dir = os.getenv("NT_DATA_DIR", ".")
+        _nt_data_source = os.getenv("NT_DATA_SOURCE", "CSV")
+        connector = DataConnector(data_dir=_nt_data_dir, source=_nt_data_source)
         data_df = connector.load(data_source, data_spec, start=start_dt, end=end_dt)
 
         if data_df.empty:
