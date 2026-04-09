@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 # ───────────────────────────── standard libs ────────────────────────────────
+import os
 import sys
 import pathlib
 import numbers
@@ -1518,7 +1519,9 @@ with st.sidebar:
     if info.doc:
         st.caption(info.doc)
 
-    connector = DataConnector()
+    _nt_data_dir = os.getenv("NT_DATA_DIR", ".")
+    _nt_data_source = os.getenv("NT_DATA_SOURCE", "CSV")
+    connector = DataConnector(data_dir=_nt_data_dir, source=_nt_data_source)
 
     # ── Data source tabs ────────────────────────────────────────────────
     st.markdown(
@@ -1528,13 +1531,18 @@ with st.sidebar:
     csv_path = None
     symbol = None
     exchange = None
+    pq_bar_type = ""
     csv_exchs = connector.get_exchanges("CSV")
     csv_syms = connector.get_symbols("CSV", csv_exchs[0] if csv_exchs else None)
     csv_tfs = connector.get_timeframes("CSV")
     ch_exchs = connector.get_exchanges("ClickHouse")
     ch_tfs = connector.get_timeframes("ClickHouse")
+    pq_exchs = connector.get_exchanges("PARQUET")
+    pq_syms = connector.get_symbols("PARQUET", pq_exchs[0] if pq_exchs else None)
+    pq_tfs = connector.get_timeframes("PARQUET")
     tf_csv = csv_tfs[0] if csv_tfs else ""
     tf_ch = ch_tfs[0] if ch_tfs else ""
+    tf_pq = pq_tfs[0] if pq_tfs else ""
 
     # Default date range based on available CSV data
     if csv_exchs and csv_syms and tf_csv:
@@ -1551,6 +1559,8 @@ with st.sidebar:
         end_csv = datetime.now(timezone.utc).date()
     start_ch = start_csv
     end_ch = end_csv
+    start_pq = start_csv
+    end_pq = end_csv
 
     if "data_tab" not in st.session_state:
         st.session_state["data_tab"] = "csv"
@@ -1559,6 +1569,11 @@ with st.sidebar:
         data_tabs = [
             stx.TabBarItemData(id="csv", title="CSV", description="Load data from CSV"),
             stx.TabBarItemData(id="ch", title="ClickHouse", description="Load data from ClickHouse"),
+            stx.TabBarItemData(
+                id="PARQUET",
+                title="Parquet",
+                description="NautilusTrader ParquetDataCatalog",
+            ),
         ]
         chosen_id = stx.tab_bar(
             data=data_tabs,
@@ -1610,6 +1625,39 @@ with st.sidebar:
         else:
             csv_path = ""
         st.write(f"Data file: **{csv_path}**")
+    elif chosen_id == "PARQUET":
+        row1 = st.columns(3)
+        exchange_pq = row1[0].selectbox(
+            "Exchange",
+            pq_exchs,
+            index=0 if pq_exchs else None,
+            key="pq_exch",
+        )
+        symbol_pq = row1[1].selectbox(
+            "Symbol",
+            pq_syms,
+            index=0 if pq_syms else None,
+            key="pq_sym",
+        )
+        tf_pq = row1[2].selectbox(
+            "TimeFrame",
+            pq_tfs,
+            index=0 if pq_tfs else None,
+            key="pq_tf",
+        )
+        row2 = st.columns(2)
+        start_pq = row2[0].date_input("Date from", start_pq, key="pq_start")
+        end_pq = row2[1].date_input("Date to", end_pq, key="pq_end")
+        if pq_exchs and pq_syms and tf_pq and exchange_pq and symbol_pq:
+            try:
+                pq_bar_type = connector.get_parquet_bar_type(
+                    exchange_pq, symbol_pq, tf_pq
+                )
+            except FileNotFoundError:
+                pq_bar_type = ""
+        else:
+            pq_bar_type = ""
+        st.write(f"Bar type: **{pq_bar_type or '(none)'}**")
     else:
         row1 = st.columns(3)
         exchange = row1[0].selectbox("Exchange", ch_exchs, key="ch_exch")
@@ -1663,12 +1711,18 @@ end_dt: datetime
 
 run_csv = run_bt and st.session_state.get("data_tab") == "csv"
 run_ch = run_bt and st.session_state.get("data_tab") == "ch"
+run_pq = run_bt and st.session_state.get("data_tab") == "PARQUET"
 
 if run_csv:
     data_source = "CSV"
     data_spec = csv_path
     start_dt = pd.to_datetime(start_csv, utc=True)
     end_dt = pd.to_datetime(end_csv, utc=True) + pd.Timedelta(days=1)
+elif run_pq:
+    data_source = "PARQUET"
+    data_spec = pq_bar_type
+    start_dt = pd.to_datetime(start_pq, utc=True)
+    end_dt = pd.to_datetime(end_pq, utc=True) + pd.Timedelta(days=1)
 elif run_ch:
     data_source = "ClickHouse"
     data_spec = {
@@ -1683,7 +1737,9 @@ elif run_ch:
 
 if run_bt:
     with st.spinner("Running back‑test… please wait"):
-        connector = DataConnector()
+        _nt_data_dir = os.getenv("NT_DATA_DIR", ".")
+        _nt_data_source = os.getenv("NT_DATA_SOURCE", "CSV")
+        connector = DataConnector(data_dir=_nt_data_dir, source=_nt_data_source)
         data_df = connector.load(data_source, data_spec, start=start_dt, end=end_dt)
 
         if data_df.empty:

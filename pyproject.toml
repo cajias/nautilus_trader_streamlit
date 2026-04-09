@@ -1,0 +1,39 @@
+[project]
+name = "nautilus-trader-streamlit"
+version = "0.1.0"
+description = "Streamlit dashboard for NautilusTrader backtesting and analytics"
+requires-python = ">=3.13,<3.14"
+dependencies = [
+    # Core viz / app stack (versions resolved by uv.lock; upstream requirements.txt was unpinned)
+    "wheel",
+    "streamlit",
+    "pandas",
+    "numpy",
+    "plotly",
+    "clickhouse-driver",
+    "python-dotenv",
+    "streamlit-lightweight-charts-v5>=0.1.7",
+    "extra-streamlit-components",
+
+    # Nautilus pinned explicitly per Phase 1 Task 1.5
+    "nautilus-trader==1.224.0",
+
+    # Added for Phase 1 Task 1.6 parquet-catalog loader (not in upstream requirements.txt)
+    "pyarrow>=16.0.0",
+]
+
+[tool.uv]
+# This repo is an application, not a distributable library — skip the build step.
+package = false
+
+# Custom index for nautilus-trader binary wheels.
+# `explicit = true` means packages are only pulled from this index when routed here via
+# [tool.uv.sources], mirroring the upstream `-i nautechsystems + --extra-index-url pypi`
+# intent of fetching nautilus-trader from nautechsystems and everything else from PyPI.
+[[tool.uv.index]]
+name = "nautechsystems"
+url = "https://packages.nautechsystems.io/simple"
+explicit = true
+
+[tool.uv.sources]
+nautilus-trader = { index = "nautechsystems" }

@@ -1,10 +1,11 @@
 from __future__ import annotations
 
 import logging
+import os
 import re
 from decimal import Decimal
 from pathlib import Path
-from typing import Any, Dict, Optional, Type
+from typing import Any, Callable, Dict, Optional, Type
 
 import numpy as np
 import pandas as pd
@@ -32,11 +33,103 @@ from .csv_data import load_ohlcv_csv
 
 
 # ──────────────────────────────────────────────────────────────────────
+# Instrument dispatch
+# ──────────────────────────────────────────────────────────────────────
+
+# Map of known (symbol, venue) → TestInstrumentProvider factory.
+# Extend this as NautilusTrader adds more factories or as we gain coverage
+# for user-specific pairs. Unknown pairs fall back to the closest USDT
+# quote instrument with a warning (see ``resolve_instrument_factory``).
+_INSTRUMENT_FACTORY_MAP: Dict[tuple[str, str], Callable] = {
+    ("BTCUSDT", "BINANCE"): TestInstrumentProvider.btcusdt_binance,
+    ("ETHUSDT", "BINANCE"): TestInstrumentProvider.ethusdt_binance,
+    ("ADAUSDT", "BINANCE"): TestInstrumentProvider.adausdt_binance,
+    ("ADABTC", "BINANCE"): TestInstrumentProvider.adabtc_binance,
+}
+
+# Default fallback factory. Used when the requested pair has no registered
+# factory. The resulting instrument will have BTCUSDT-like precisions —
+# sufficient for dashboard backtests but not necessarily tick-accurate for
+# every pair (e.g. PEPE, DOGE). Tracked as a known limitation; extend the
+# map above as real factories become available.
+_FALLBACK_FACTORY: Callable = TestInstrumentProvider.btcusdt_binance
+
+
+def parse_instrument_id(instrument_id: str) -> tuple[str, str]:
+    """Split ``'BTCUSDT.BINANCE'`` into ``('BTCUSDT', 'BINANCE')``."""
+    if "." not in instrument_id:
+        raise ValueError(
+            f"instrument_id must be of the form 'SYMBOL.VENUE', got: {instrument_id!r}"
+        )
+    symbol, venue = instrument_id.split(".", 1)
+    if not symbol or not venue:
+        raise ValueError(
+            f"instrument_id {instrument_id!r} has empty symbol or venue; "
+            "expected 'SYMBOL.VENUE'"
+        )
+    return symbol.upper(), venue.upper()
+
+
+def resolve_instrument_factory(instrument_id: str) -> Callable:
+    """Return the ``TestInstrumentProvider`` factory for an instrument id.
+
+    Falls back to :data:`_FALLBACK_FACTORY` (BTCUSDT/Binance) with a warning
+    when no exact match is registered. Callers that need strict matching
+    should inspect the return value against the map themselves.
+    """
+    symbol, venue = parse_instrument_id(instrument_id)
+    factory = _INSTRUMENT_FACTORY_MAP.get((symbol, venue))
+    if factory is None:
+        _logger.warning(
+            "No TestInstrumentProvider factory for %s.%s — falling back to "
+            "BTCUSDT/BINANCE precisions. Tick rounding may be approximate.",
+            symbol,
+            venue,
+        )
+        factory = _FALLBACK_FACTORY
+    return factory
+
+
+def resolve_instrument_id_from_env(
+    override: Optional[str] = None,
+    csv_path: Optional[str] = None,
+) -> str:
+    """Determine the active instrument id.
+
+    Resolution order:
+
+    1. Explicit ``override`` argument.
+    2. ``NT_INSTRUMENT`` environment variable.
+    3. Parsed from ``csv_path`` filename (``BINANCE_BTCUSD, 15.csv`` →
+       ``BTCUSD.BINANCE``). Note that CSV filenames historically use
+       ``BTCUSD`` (no T) while catalog bar_types use ``BTCUSDT``; the
+       caller is responsible for reconciling this if needed.
+    4. Hard default ``BTCUSDT.BINANCE``.
+    """
+    if override:
+        return override
+    env_val = os.getenv("NT_INSTRUMENT")
+    if env_val:
+        return env_val
+    if csv_path:
+        m = re.match(r"(?P<ex>[A-Z]+)_(?P<sym>[A-Z]+)", Path(csv_path).name)
+        if m:
+            return f"{m.group('sym')}.{m.group('ex')}"
+    return "BTCUSDT.BINANCE"
+
+
+def get_active_venue() -> Venue:
+    """Return a :class:`Venue` derived from ``NT_INSTRUMENT`` (or default)."""
+    _, venue = parse_instrument_id(resolve_instrument_id_from_env())
+    return Venue(venue)
+
+
+# ──────────────────────────────────────────────────────────────────────
 # 2. DataFrame → Nautilus Bars
 # ──────────────────────────────────────────────────────────────────────
 def dataframe_to_bars(
     df: pd.DataFrame,
-    instrument_factory=TestInstrumentProvider.btcusdt_binance,
+    instrument_factory: Optional[Callable] = None,
 ):
     """
     Accept a DataFrame (as from ``load_ohlcv_csv``) and return
@@ -44,6 +137,8 @@ def dataframe_to_bars(
 
     *Interval* is inferred automatically from index differences.
     """
+    if instrument_factory is None:
+        instrument_factory = resolve_instrument_factory(resolve_instrument_id_from_env())
     if df.empty:
         raise ValueError("DataFrame is empty – nothing to convert.")
 
@@ -202,7 +297,8 @@ def load_bars(csv_path: str):
 
     interval = max(1, interval)  # Ensure interval is at least 1
 
-    instr = TestInstrumentProvider.btcusdt_binance()
+    instrument_id = resolve_instrument_id_from_env(csv_path=csv_path)
+    instr = resolve_instrument_factory(instrument_id)()
     # BarType requires InstrumentId, BarSpecification, and AggregationSource
     bar_type = BarType(
         instr.id,
@@ -227,8 +323,9 @@ def load_bars(csv_path: str):
 
 def _init_engine(instr, bars, balance: float = 10_000.0) -> BacktestEngine:
     engine = BacktestEngine()
+    venue = Venue(str(instr.id.venue))
     engine.add_venue(
-        Venue("BINANCE"),
+        venue,
         oms_type=OmsType.NETTING,
         account_type=AccountType.CASH,
         # base_currency=None → multi-currency account since version 1.171
@@ -646,7 +743,7 @@ def run_backtest(
                 account_obj = None
                 try:
                     # Assume the trader has a get_account method
-                    account_obj = trader.get_account(Venue("BINANCE"))
+                    account_obj = trader.get_account(Venue(str(instr.id.venue)))
                 except Exception:
                     # Fallback: look for accounts in trader attributes
                     accounts = getattr(trader, "accounts", None)
@@ -694,7 +791,7 @@ def run_backtest(
                 _logger.warning("Falling back to manual equity calculation.")
                 start_balance = 10_000.0
                 try:
-                    account_obj = trader.get_account(Venue("BINANCE"))
+                    account_obj = trader.get_account(Venue(str(instr.id.venue)))
                     bal = getattr(account_obj, "cash_balance", None)
                     if callable(bal):
                         start_balance = float(bal(USDT).as_double())
@@ -790,7 +887,7 @@ def run_backtest(
     commissions: Dict[str, float] = {}
     if trader is not None:
         try:
-            account_obj = trader.get_account(Venue("BINANCE"))
+            account_obj = trader.get_account(Venue(str(instr.id.venue)))
             if account_obj is not None and hasattr(account_obj, "commissions"):
                 # commissions() returns dict[Currency, Money]
                 comms = account_obj.commissions()
