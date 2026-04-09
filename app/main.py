@@ -33,6 +33,22 @@ except ImportError:
 
 # ────────────────────────────── local code ───────────────────────────────────
 sys.path.append(str(pathlib.Path(__file__).resolve().parents[1]))
+
+# ─── Strategies directory resolution ──────────────────────────────────────────
+# The dashboard discovers strategies from ``NT_STRATEGIES_DIR``. This allows
+# users to point the dashboard at their own project's strategies tree without
+# forking this repo. Default is "strategies" (backward compatible — upstream
+# layout). The **parent** of the resolved directory is prepended to sys.path
+# so that absolute imports like ``strategies.forex.ema_cross`` resolve, which
+# matches the import-path format documented in the nautilus-trading project
+# CLAUDE.md.
+_nt_strategies_dir = os.getenv("NT_STRATEGIES_DIR", "strategies")
+_nt_strategies_path = pathlib.Path(_nt_strategies_dir).expanduser().resolve()
+if _nt_strategies_path.is_dir():
+    _strategies_parent = str(_nt_strategies_path.parent)
+    if _strategies_parent not in sys.path:
+        sys.path.insert(0, _strategies_parent)
+
 from modules.strategy_loader import discover_strategies
 from modules.backtest_runner import run_backtest
 from modules.dashboard_actor import DashboardPublisher  # optional, only if supported
@@ -41,7 +57,7 @@ from modules.csv_data import load_ohlcv_csv
 from datetime import timedelta
 
 # ───────────────────────────── Streamlit page ────────────────────────────────
-st.set_page_config(page_title="NautilusTrader Dashboard", layout="wide")
+st.set_page_config(page_title="NT Trading — Backtest Dashboard", layout="wide")
 
 # --- CSS tweaks --------------------------------------------------------------
 st.markdown(
@@ -75,7 +91,7 @@ st.markdown(
     unsafe_allow_html=True,
 )
 
-st.title("NautilusTrader — dashboard")
+st.title("NT Trading — Backtest Dashboard")
 
 # Store back-test outputs so they persist across reruns
 if "bt_result" not in st.session_state:
@@ -1507,9 +1523,13 @@ def draw_dashboard(
 
 
 # ╭──────────────────────── sidebar (user inputs) ─────────────────────────────╮
-strategies = discover_strategies("strategies")
+strategies = discover_strategies(str(_nt_strategies_path))
 if not strategies:
-    st.error("No strategies found under /strategies — add at least one and reload.")
+    st.error(
+        f"No strategies found under `{_nt_strategies_path}`. "
+        "Set `NT_STRATEGIES_DIR` to a directory containing your Strategy "
+        "subclasses (paired with StrategyConfig classes) and reload."
+    )
     st.stop()
 
 with st.sidebar:
@@ -1562,8 +1582,19 @@ with st.sidebar:
     start_pq = start_csv
     end_pq = end_csv
 
+    # Map NT_DATA_SOURCE env var to the tab_bar id that corresponds.
+    # Tab ids are historically inconsistent ("csv", "ch", "PARQUET") — do not
+    # normalize them or the branch conditions below (``chosen_id == "csv"``)
+    # will break. Mapping only converts the env var to the existing id.
+    _default_tab_id = {
+        "csv": "csv",
+        "clickhouse": "ch",
+        "ch": "ch",
+        "parquet": "PARQUET",
+    }.get(_nt_data_source.lower(), "csv")
+
     if "data_tab" not in st.session_state:
-        st.session_state["data_tab"] = "csv"
+        st.session_state["data_tab"] = _default_tab_id
 
     if stx:
         data_tabs = [

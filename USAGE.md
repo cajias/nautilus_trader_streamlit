@@ -14,6 +14,7 @@ cd /Users/rc/Projects/workspace/nautilus-trader-streamlit
 NT_DATA_DIR=/path/to/nautilus/catalog \
 NT_DATA_SOURCE=PARQUET \
 NT_INSTRUMENT=BTCUSDT.BINANCE \
+NT_STRATEGIES_DIR=/path/to/your/strategies \
 uv run streamlit run app/main.py
 ```
 
@@ -24,8 +25,24 @@ cd /Users/rc/Projects/workspace/nautilus-trader-streamlit
 NT_DATA_DIR=/path/to/csv_dir \
 NT_DATA_SOURCE=CSV \
 NT_INSTRUMENT=BTCUSDT.BINANCE \
+NT_STRATEGIES_DIR=/path/to/your/strategies \
 uv run streamlit run app/main.py
 ```
+
+### Point at the nautilus-trading workspace (canonical)
+
+```bash
+cd /Users/rc/Projects/workspace/nautilus-trader-streamlit
+NT_DATA_DIR=/Users/rc/Projects/workspace/nautilus-trading/catalog \
+NT_DATA_SOURCE=PARQUET \
+NT_STRATEGIES_DIR=/Users/rc/Projects/workspace/nautilus-trading/strategies \
+uv run streamlit run app/main.py
+```
+
+When `NT_DATA_SOURCE=PARQUET` is set, the dashboard opens the **Parquet**
+tab by default (not CSV). The Strategies dropdown is populated by a
+recursive scan of `NT_STRATEGIES_DIR` — e.g. it will find
+`strategies/forex/ema_cross.py` and `strategies/crypto/grid_bot.py`.
 
 The dashboard will open on `http://localhost:8501` by default.
 
@@ -59,15 +76,40 @@ back in the same shell — see Section 5.
 
 ## 2. Environment variables reference
 
-| Variable         | Default            | Valid values                                           | Purpose                                                               |
-|------------------|--------------------|--------------------------------------------------------|-----------------------------------------------------------------------|
-| `NT_DATA_DIR`    | `.`                | absolute or relative path                              | Where the dashboard looks for data (catalog root or CSV directory)    |
-| `NT_DATA_SOURCE` | `CSV`              | `CSV` / `PARQUET` / `CLICKHOUSE`                       | Selects the `DataConnector` backend                                   |
-| `NT_INSTRUMENT`  | `BTCUSDT.BINANCE`  | Nautilus instrument id, format `SYMBOL.VENUE`          | Which instrument the backtest runner loads and trades                 |
+| Variable            | Default            | Valid values                                           | Purpose                                                               |
+|---------------------|--------------------|--------------------------------------------------------|-----------------------------------------------------------------------|
+| `NT_DATA_DIR`       | `.`                | absolute or relative path                              | Where the dashboard looks for data (catalog root or CSV directory)    |
+| `NT_DATA_SOURCE`    | `CSV`              | `CSV` / `PARQUET` / `CLICKHOUSE`                       | Selects the `DataConnector` backend AND the default active tab       |
+| `NT_INSTRUMENT`     | `BTCUSDT.BINANCE`  | Nautilus instrument id, format `SYMBOL.VENUE`          | Which instrument the backtest runner loads and trades                 |
+| `NT_STRATEGIES_DIR` | `strategies`       | absolute or relative path                              | Directory recursively scanned for Strategy + StrategyConfig classes   |
 
-All three are read at startup. Changing them requires restarting
+All four are read at startup. Changing them requires restarting
 `streamlit run`. Defaults preserve upstream behaviour when the variables
 are unset.
+
+### `NT_STRATEGIES_DIR` import path behaviour
+
+The **parent** of `NT_STRATEGIES_DIR` is inserted into `sys.path` at app
+startup, so absolute imports of the form
+`<basename>.<subdir>.<module>` resolve correctly. Matching the layout in
+the nautilus-trading project CLAUDE.md:
+
+```
+NT_STRATEGIES_DIR=/abs/path/strategies
+→ sys.path prepend: /abs/path
+→ resolves: strategies.forex.ema_cross, strategies.crypto.grid_bot, ...
+```
+
+The basename of `NT_STRATEGIES_DIR` must match the Python package name
+(i.e. contain `__init__.py`). If your tree looks like
+`/abs/path/strategies/forex/__init__.py` and
+`/abs/path/strategies/__init__.py`, the parent `/abs/path` is what gets
+added to sys.path, and `strategies.forex.ema_cross` becomes importable.
+
+The upstream sample strategies that previously lived at
+`strategies/` in this repo have been renamed to `examples/` to avoid
+shadowing user-owned strategies. They remain available as reference
+material but no longer auto-load.
 
 ## 3. Parquet catalog layout
 
