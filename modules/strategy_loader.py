@@ -43,12 +43,22 @@ def discover_strategies(root: str = "strategies") -> Dict[str, StrategyInfo]:
     Discover and load trading strategy classes and their configurations.
 
     Steps:
-    1) If 'strategies/admin.py' exists and defines a _REGISTRY, use it directly.
-    2) Otherwise, scan all .py files for pairs of (Strategy subclass, StrategyConfig subclass).
+    1) If '<root>/admin.py' exists and defines a _REGISTRY, use it directly.
+    2) Otherwise, recursively scan all .py files under root for pairs of
+       (Strategy subclass, StrategyConfig subclass).
 
-    New behavior: if the specified 'root' directory does not exist, fall back to the
-    current directory. This prevents the dashboard from failing on a bare repository
-    without a 'strategies/' subpackage.
+    Behavior notes:
+
+    - The scan is **recursive** (``rglob``) so projects can organize strategies
+      by market type, e.g. ``strategies/forex/ema_cross.py``,
+      ``strategies/crypto/grid_bot.py``. This matches the layout documented
+      in the nautilus-trading project CLAUDE.md.
+    - ``__pycache__``, ``__init__.py`` and dunder files are skipped.
+    - If the specified ``root`` directory does not exist, fall back to the
+      current directory. This prevents the dashboard from failing on a bare
+      repository without a strategies subpackage.
+    - Modules whose stem collides with a previously loaded strategy are
+      registered under the fully qualified file stem so both can coexist.
     """
     root_path = Path(root)
     if not root_path.exists():
@@ -66,14 +76,18 @@ def discover_strategies(root: str = "strategies") -> Dict[str, StrategyInfo]:
             }
 
     infos: Dict[str, StrategyInfo] = {}
-    # Scan all .py files in the root path
-    for py in root_path.glob("*.py"):
-        if py.name == "admin.py":
+    # Recursively scan all .py files under the root path
+    for py in sorted(root_path.rglob("*.py")):
+        # Skip dunder files, cached compiled files and admin.py
+        if py.name.startswith("_") or py.name == "admin.py":
+            continue
+        if "__pycache__" in py.parts:
             continue
         try:
             mod = _import(py)
         except Exception as exc:
-            print(f"[loader] skipping {py.name}: {exc}")
+            rel = py.relative_to(root_path) if py.is_relative_to(root_path) else py
+            print(f"[loader] skipping {rel}: {exc}")
             continue
 
         strat_cls = None
@@ -86,7 +100,10 @@ def discover_strategies(root: str = "strategies") -> Dict[str, StrategyInfo]:
                 cfg_cls = cls
         # If both a strategy and its config are found, record them
         if strat_cls and cfg_cls:
-            infos[strat_cls.__name__] = StrategyInfo(
-                strat_cls.__name__, mod, strat_cls, cfg_cls
-            )
+            key = strat_cls.__name__
+            if key in infos:
+                # Disambiguate with relative path stem to avoid clobbering
+                rel_parts = py.relative_to(root_path).with_suffix("").parts
+                key = f"{strat_cls.__name__} ({'/'.join(rel_parts)})"
+            infos[key] = StrategyInfo(key, mod, strat_cls, cfg_cls)
     return infos
